@@ -39,6 +39,7 @@
 </header>
 <div id="wrap"><video id="cam" playsinline muted autoplay></video><div class="frame"></div><div class="laser"></div></div>
 <div id="msg">جارٍ تشغيل الكاميرا…</div>
+<div id="info" style="text-align:center;font-size:11px;opacity:.5"></div>
 <div class="row">
   <button id="torch" class="ghost" type="button" hidden>💡</button>
   <input id="manual" inputmode="numeric" placeholder="أو اكتب رقم الباركود" autocomplete="off">
@@ -89,22 +90,40 @@
     }
     say('وجّه الباركود إلى الإطار');
     var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
+    var work = document.createElement('canvas'), wctx = work.getContext('2d', { willReadFrequently: true });
+    var OPTS = { tryHarder: true, tryRotate: true, formats: ['EAN-13', 'EAN-8', 'UPC-A', 'UPC-E', 'Code128', 'Code39', 'ITF'], maxNumberOfSymbols: 1 };
+    var frames = 0, t0 = Date.now(), vw = 0, vh = 0, hinted = false;
+    var info = document.getElementById('info');
+
+    // كل إطار يُقرأ بصيغة مختلفة بالتناوب: كامل، ثم المنتصف مكبّرًا (للباركود الصغير/البعيد)، ثم مصغّرًا (للضبابي): يرفع نسبة القراءة
+    function variant(n) {
+      var w = canvas.width, h = canvas.height;
+      if (n === 0) return ctx.getImageData(0, 0, w, h);
+      if (n === 1) { var cw = Math.round(w * 0.6), ch = Math.round(h * 0.6); work.width = Math.round(cw * 1.6); work.height = Math.round(ch * 1.6);
+        wctx.drawImage(canvas, (w - cw) / 2, (h - ch) / 2, cw, ch, 0, 0, work.width, work.height); return wctx.getImageData(0, 0, work.width, work.height); }
+      work.width = Math.round(w * 0.55); work.height = Math.round(h * 0.55);
+      wctx.drawImage(canvas, 0, 0, work.width, work.height); return wctx.getImageData(0, 0, work.width, work.height);
+    }
+
     (async function loop() {
       while (!done) {
         if (video.readyState >= 2 && video.videoWidth) {
-          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+          vw = video.videoWidth; vh = video.videoHeight;
+          canvas.width = vw; canvas.height = vh;
           ctx.drawImage(video, 0, 0);
           try {
-            var res = await ZXingWASM.readBarcodes(ctx.getImageData(0, 0, canvas.width, canvas.height),
-              { tryHarder: true, tryRotate: true, formats: ['EAN-13', 'EAN-8', 'UPC-A', 'UPC-E', 'Code128', 'Code39', 'ITF'], maxNumberOfSymbols: 1 });
+            var res = await ZXingWASM.readBarcodes(variant(frames % 3), OPTS);
+            frames++;
             if (res.length) {
               var r = res[0], now = Date.now();
               if (CHECKSUMMED[r.format] || (r.text === last && now - lastAt < 1500)) { finish(r.text); return; }
               last = r.text; lastAt = now;
             }
-          } catch (e) { /* إطار بلا باركود */ }
+          } catch (e) { frames++; }
+          if (info) info.textContent = '📡 ' + frames + ' إطار · ' + vw + '×' + vh;
+          if (!hinted && Date.now() - t0 > 6000) { hinted = true; say('قرّب الباركود (10–20 سم)، ثبّته أفقيًا، وتجنّب اللمعان'); }
         }
-        await new Promise(function (r) { setTimeout(r, 110); });
+        await new Promise(function (r) { setTimeout(r, 60); });
       }
     })();
   }
