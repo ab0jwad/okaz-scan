@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ماسح الباركود</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--tg-theme-bg-color, #111); color: var(--tg-theme-text-color, #fff);
+    font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { padding: 14px 16px 6px; text-align: center; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 0; font-size: 13px; opacity: .75; }
+  #wrap { position: relative; flex: 1; min-height: 280px; background: #000; margin: 8px 12px; border-radius: 16px; overflow: hidden; }
+  video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .frame { position: absolute; left: 7%; right: 7%; top: 30%; height: 40%; border: 3px solid #35e06b; border-radius: 14px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,.4); pointer-events: none; }
+  .laser { position: absolute; left: 9%; right: 9%; top: 50%; height: 2px; background: #ff3b3b; box-shadow: 0 0 8px #ff3b3b;
+    animation: scan 1.6s ease-in-out infinite alternate; pointer-events: none; }
+  @keyframes scan { from { transform: translateY(-50px); } to { transform: translateY(50px); } }
+  #msg { text-align: center; padding: 6px 16px; min-height: 28px; font-size: 14px; }
+  #msg.ok { color: #35e06b; font-weight: 700; font-size: 20px; }
+  #msg.err { color: #ff7b7b; }
+  .row { display: flex; gap: 8px; padding: 6px 12px 16px; }
+  input { flex: 1; min-width: 0; font-size: 18px; padding: 12px; border-radius: 12px; border: 1px solid #8884; background: var(--tg-theme-secondary-bg-color, #222);
+    color: inherit; direction: ltr; text-align: center; }
+  button { font-size: 16px; padding: 12px 16px; border: 0; border-radius: 12px; background: var(--tg-theme-button-color, #2481cc);
+    color: var(--tg-theme-button-text-color, #fff); }
+  button.ghost { background: var(--tg-theme-secondary-bg-color, #333); color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📷 وجّه الباركود إلى الكاميرا</h1>
+  <p>يُقرأ تلقائيًا بلا تصوير، ثم تظهر بطاقة الصنف في المحادثة</p>
+</header>
+<div id="wrap"><video id="cam" playsinline muted autoplay></video><div class="frame"></div><div class="laser"></div></div>
+<div id="msg">جارٍ تشغيل الكاميرا…</div>
+<div class="row">
+  <button id="torch" class="ghost" type="button" hidden>💡</button>
+  <input id="manual" inputmode="numeric" placeholder="أو اكتب رقم الباركود" autocomplete="off">
+  <button id="send" type="button">إرسال</button>
+</div>
+<script src="zxing-reader.iife.js"></script>
+<script>
+(function () {
+  var tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+  var msg = document.getElementById('msg'), video = document.getElementById('cam');
+  var done = false, stream = null, last = '', lastAt = 0;
+  var CHECKSUMMED = { 'EAN-13': 1, 'EAN-8': 1, 'UPC-A': 1, 'UPC-E': 1 };   // أنواع فيها رقم تحقق: تُقبل من قراءة واحدة
+
+  function say(text, cls) { msg.textContent = text; msg.className = cls || ''; }
+
+  function finish(code) {
+    if (done) return;
+    code = String(code || '').replace(/\D/g, '');
+    if (code.length < 6) { say('الرقم غير صالح', 'err'); return; }
+    done = true;
+    if (navigator.vibrate) navigator.vibrate(60);
+    say('✔ ' + code, 'ok');
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    if (tg && tg.sendData) { tg.sendData(code); }              // يغلق الواجهة ويرسل الرقم للبوت
+    else { say('✔ ' + code + ' (افتح الصفحة من البوت لإرسالها)', 'ok'); }
+  }
+
+  document.getElementById('send').onclick = function () { finish(document.getElementById('manual').value); };
+  document.getElementById('manual').addEventListener('keydown', function (e) { if (e.key === 'Enter') finish(this.value); });
+
+  async function start() {
+    if (typeof ZXingWASM === 'undefined') { say('تعذّر تحميل مكتبة القراءة', 'err'); return; }
+    await ZXingWASM.prepareZXingModule({
+      overrides: { locateFile: function (p, prefix) { return p.endsWith('.wasm') ? new URL('zxing_reader.wasm', location.href).href : prefix + p; } },
+      fireImmediately: true
+    });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    var track = stream.getVideoTracks()[0], caps = (track.getCapabilities && track.getCapabilities()) || {};
+    if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+    if (caps.torch) {
+      var b = document.getElementById('torch'), on = false; b.hidden = false;
+      b.onclick = function () { on = !on; track.applyConstraints({ advanced: [{ torch: on }] }).catch(function () {}); b.textContent = on ? '🔦' : '💡'; };
+    }
+    say('وجّه الباركود إلى الإطار');
+    var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
+    (async function loop() {
+      while (!done) {
+        if (video.readyState >= 2 && video.videoWidth) {
+          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          try {
+            var res = await ZXingWASM.readBarcodes(ctx.getImageData(0, 0, canvas.width, canvas.height),
+              { tryHarder: true, tryRotate: true, formats: ['EAN-13', 'EAN-8', 'UPC-A', 'UPC-E', 'Code128', 'Code39', 'ITF'], maxNumberOfSymbols: 1 });
+            if (res.length) {
+              var r = res[0], now = Date.now();
+              if (CHECKSUMMED[r.format] || (r.text === last && now - lastAt < 1500)) { finish(r.text); return; }
+              last = r.text; lastAt = now;
+            }
+          } catch (e) { /* إطار بلا باركود */ }
+        }
+        await new Promise(function (r) { setTimeout(r, 110); });
+      }
+    })();
+  }
+
+  start().catch(function () {
+    say('تعذّر فتح الكاميرا: اسمح بالوصول للكاميرا، أو اكتب الرقم يدويًا.', 'err');
+  });
+})();
+</script>
+</body>
+</html>
