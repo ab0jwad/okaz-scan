@@ -64,7 +64,12 @@
     if (navigator.vibrate) navigator.vibrate(60);
     say('✔ ' + code, 'ok');
     if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
-    if (tg && tg.sendData) { tg.sendData(code); }              // يغلق الواجهة ويرسل الرقم للبوت
+    var qs = new URLSearchParams(location.search), bname = (qs.get('b') || '').replace(/[^A-Za-z0-9_]/g, '');
+    if (qs.get('m') === 'inline' && bname && tg && tg.openTelegramLink) {   // فُتحت من زر مضمَّن: sendData غير متاحة، فيعود الرقم برابط البوت
+      tg.openTelegramLink('https://t.me/' + bname + '?start=scan_' + code);
+      setTimeout(function () { try { tg.close(); } catch (e) {} }, 400);
+    }
+    else if (tg && tg.sendData) { tg.sendData(code); }         // يغلق الواجهة ويرسل الرقم للبوت
     else { say('✔ ' + code + ' (افتح الصفحة من البوت لإرسالها)', 'ok'); }
   }
 
