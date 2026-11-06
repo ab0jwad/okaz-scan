@@ -41,6 +41,10 @@
 </header>
 <div id="wrap"><video id="cam" playsinline muted autoplay></video><div class="frame"></div><div class="laser"></div></div>
 <div id="msg">جارٍ تشغيل الكاميرا…</div>
+<div class="row" id="fallbackRow" hidden>
+  <button id="retryBtn" class="ghost wide" type="button">🔁 إعادة المحاولة</button>
+  <button id="extBtn" class="ghost wide" type="button">🌐 فتح في متصفح الجوال</button>
+</div>
 <div class="row">
   <button id="torch" class="ghost" type="button" hidden>💡</button>
   <button id="photoBtn" class="wide" type="button">📷 تصوير الباركود بكاميرا الجوال</button>
@@ -75,7 +79,10 @@ window.addEventListener('load', function () {
     say('✔ ' + label, 'ok');
     stopStream();
     var tg = initTg(), qs = new URLSearchParams(location.search), bname = (qs.get('b') || '').replace(/[^A-Za-z0-9_]/g, '');
-    if (qs.get('m') === 'inline' && bname && tg && tg.openTelegramLink) {   // فُتحت من زر مضمَّن: sendData غير متاحة
+    if (qs.get('m') === 'ext') {   // فُتحت في متصفح الجوال الخارجي: نعيد الرقم للبوت برابط t.me
+      if (/^\d+$/.test(payload)) { location.href = 'https://t.me/' + (bname || 'okaz_pack_bot') + '?start=scan_' + payload; }
+      else { say('اكتب اسم الصنف مباشرة في محادثة البوت', 'err'); done = false; }
+    } else if (qs.get('m') === 'inline' && bname && tg && tg.openTelegramLink) {   // فُتحت من زر مضمَّن: sendData غير متاحة
       if (/^\d+$/.test(payload)) { tg.openTelegramLink('https://t.me/' + bname + '?start=scan_' + payload); setTimeout(function () { try { tg.close(); } catch (e) {} }, 400); }
       else { say('اكتب اسم الصنف مباشرة في المحادثة', 'err'); done = false; }
     } else if (tg && tg.sendData) { tg.sendData(payload); }
@@ -188,13 +195,27 @@ window.addEventListener('load', function () {
   }
 
   function camError(e) {
-    var n = e && e.name;
-    if (n === 'NotAllowedError' || n === 'SecurityError') say('الكاميرا غير مسموحة لتلغرام: من إعدادات الجوال ← التطبيقات ← تلغرام ← الأذونات ← الكاميرا. أو استعمل «📷 تصوير الباركود» أو اكتب الاسم/الرقم.', 'err');
-    else say('تعذّر تشغيل الكاميرا الحيّة على هذا الجوال. استعمل «📷 تصوير الباركود بكاميرا الجوال» أو اكتب الاسم/الرقم.', 'err');
+    var n = (e && e.name) || 'Unknown', t = TG(), ext = new URLSearchParams(location.search).get('m') === 'ext';
+    if (n === 'NotAllowedError' || n === 'SecurityError') say('الكاميرا غير مسموحة لتلغرام: من إعدادات الجوال ← التطبيقات ← تلغرام ← الأذونات ← الكاميرا. أو جرّب «🌐 فتح في متصفح الجوال»، أو «📷 تصوير الباركود»، أو اكتب الاسم/الرقم.', 'err');
+    else say('تعذّر تشغيل الكاميرا الحيّة هنا. جرّب «🌐 فتح في متصفح الجوال» أو «📷 تصوير الباركود» أو اكتب الاسم/الرقم.', 'err');
+    // سبب الفشل الحقيقي يظهر أسفل الشاشة ليُنقل إلينا عند تكرار المشكلة
+    info.textContent = '⚠ ' + n + (e && e.message ? ': ' + String(e.message).slice(0, 60) : '') + ' | ' + (t && t.platform || 'web') + ' ' + (t && t.version || '') + (window.isSecureContext ? '' : ' | insecure') + (ext ? ' | ext' : '');
+    document.getElementById('fallbackRow').hidden = false;
+    document.getElementById('extBtn').hidden = ext;   // داخل المتصفح الخارجي لا معنى للزر
   }
+  document.getElementById('retryBtn').onclick = function () {
+    stopStream(); say('جارٍ تشغيل الكاميرا…');
+    openCamera().then(function () { document.getElementById('fallbackRow').hidden = true; say('وجّه الباركود إلى الإطار'); if (!looping) loop(); }).catch(camError);
+  };
+  document.getElementById('extBtn').onclick = function () {   // متصفح الجوال (كروم/سفاري) يطلب إذن الكاميرا بنفسه ولا يعتمد على إذن تلغرام
+    var u = location.origin + location.pathname + '?m=ext&b=' + encodeURIComponent(new URLSearchParams(location.search).get('b') || 'okaz_pack_bot'), t = TG();
+    if (t && t.openLink) t.openLink(u); else window.open(u, '_blank');
+  };
 
   // ---- حلقة القراءة
+  var looping = false;
   function loop() {
+    looping = true;
     var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
     var frames = 0, t0 = Date.now(), hinted = false;
     (async function run() {
