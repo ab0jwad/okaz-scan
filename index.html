@@ -4,139 +4,240 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>ماسح الباركود</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://telegram.org/js/telegram-web-app.js" async></script>
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--tg-theme-bg-color, #111); color: var(--tg-theme-text-color, #fff);
     font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; }
   body { display: flex; flex-direction: column; }
-  header { padding: 14px 16px 6px; text-align: center; }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-  p { margin: 0; font-size: 13px; opacity: .75; }
-  #wrap { position: relative; flex: 1; min-height: 280px; background: #000; margin: 8px 12px; border-radius: 16px; overflow: hidden; }
+  header { padding: 10px 16px 2px; text-align: center; }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  p { margin: 0; font-size: 12px; opacity: .75; }
+  #wrap { position: relative; flex: 1; min-height: 220px; background: #000; margin: 8px 12px; border-radius: 16px; overflow: hidden; }
   video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .frame { position: absolute; left: 7%; right: 7%; top: 30%; height: 40%; border: 3px solid #35e06b; border-radius: 14px;
+  .frame { position: absolute; left: 7%; right: 7%; top: 28%; height: 44%; border: 3px solid #35e06b; border-radius: 14px;
     box-shadow: 0 0 0 9999px rgba(0,0,0,.4); pointer-events: none; }
   .laser { position: absolute; left: 9%; right: 9%; top: 50%; height: 2px; background: #ff3b3b; box-shadow: 0 0 8px #ff3b3b;
     animation: scan 1.6s ease-in-out infinite alternate; pointer-events: none; }
-  @keyframes scan { from { transform: translateY(-50px); } to { transform: translateY(50px); } }
-  #msg { text-align: center; padding: 6px 16px; min-height: 28px; font-size: 14px; }
+  @keyframes scan { from { transform: translateY(-40px); } to { transform: translateY(40px); } }
+  #msg { text-align: center; padding: 4px 16px; min-height: 26px; font-size: 14px; }
   #msg.ok { color: #35e06b; font-weight: 700; font-size: 20px; }
-  #msg.err { color: #ff7b7b; }
-  .row { display: flex; gap: 8px; padding: 6px 12px 16px; }
-  input { flex: 1; min-width: 0; font-size: 18px; padding: 12px; border-radius: 12px; border: 1px solid #8884; background: var(--tg-theme-secondary-bg-color, #222);
-    color: inherit; direction: ltr; text-align: center; }
-  button { font-size: 16px; padding: 12px 16px; border: 0; border-radius: 12px; background: var(--tg-theme-button-color, #2481cc);
+  #msg.err { color: #ff9b7b; }
+  .row { display: flex; gap: 8px; padding: 4px 12px 8px; }
+  input[type=text] { flex: 1; min-width: 0; font-size: 17px; padding: 11px; border-radius: 12px; border: 1px solid #8884;
+    background: var(--tg-theme-secondary-bg-color, #222); color: inherit; text-align: center; }
+  button { font-size: 15px; padding: 11px 14px; border: 0; border-radius: 12px; background: var(--tg-theme-button-color, #2481cc);
     color: var(--tg-theme-button-text-color, #fff); }
   button.ghost { background: var(--tg-theme-secondary-bg-color, #333); color: inherit; }
+  button.wide { flex: 1; }
+  #info { text-align: center; font-size: 11px; opacity: .45; min-height: 14px; padding-bottom: 8px; }
 </style>
 </head>
 <body>
 <header>
   <h1>📷 وجّه الباركود إلى الكاميرا</h1>
-  <p>يُقرأ تلقائيًا بلا تصوير، ثم تظهر بطاقة الصنف في المحادثة</p>
+  <p>يُقرأ تلقائيًا · أو صوّره بكاميرا الجوال · أو اكتب اسم الصنف/رقمه</p>
 </header>
 <div id="wrap"><video id="cam" playsinline muted autoplay></video><div class="frame"></div><div class="laser"></div></div>
 <div id="msg">جارٍ تشغيل الكاميرا…</div>
-<div id="info" style="text-align:center;font-size:11px;opacity:.5"></div>
 <div class="row">
   <button id="torch" class="ghost" type="button" hidden>💡</button>
-  <input id="manual" inputmode="numeric" placeholder="أو اكتب رقم الباركود" autocomplete="off">
-  <button id="send" type="button">إرسال</button>
+  <button id="photoBtn" class="wide" type="button">📷 تصوير الباركود بكاميرا الجوال</button>
+  <input id="photo" type="file" accept="image/*" capture="environment" hidden>
 </div>
-<script src="zxing-reader.iife.js"></script>
+<div class="row">
+  <input id="manual" type="text" placeholder="اسم الصنف أو رقمه أو الباركود" autocomplete="off" enterkeyhint="search">
+  <button id="send" type="button">بحث</button>
+</div>
+<div id="info"></div>
+<script src="zxing-reader.iife.js" defer></script>
 <script>
-(function () {
-  var tg = window.Telegram && window.Telegram.WebApp;
-  if (tg) { tg.ready(); tg.expand(); }
-  var msg = document.getElementById('msg'), video = document.getElementById('cam');
-  var done = false, stream = null, last = '', lastAt = 0;
-  var CHECKSUMMED = { 'EAN-13': 1, 'EAN-8': 1, 'UPC-A': 1, 'UPC-E': 1 };   // أنواع فيها رقم تحقق: تُقبل من قراءة واحدة
+window.addEventListener('load', function () {
+  var video = document.getElementById('cam'), msg = document.getElementById('msg'), info = document.getElementById('info');
+  var done = false, stream = null, last = '', lastAt = 0, tgInit = false;
+  var CHECKSUMMED = { 'EAN-13': 1, 'EAN-8': 1, 'UPC-A': 1, 'UPC-E': 1, 'ean_13': 1, 'ean_8': 1, 'upc_a': 1, 'upc_e': 1 };   // فيها رقم تحقق: تُقبل من قراءة واحدة
+  var NATIVE_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
+  var ZX_FORMATS = ['EAN-13', 'EAN-8', 'UPC-A', 'UPC-E', 'Code128', 'Code39', 'ITF'];
+  var nativeDet = null, zxReady = false, zxPromise = null;
 
+  function TG() { return window.Telegram && window.Telegram.WebApp; }
+  function initTg() { var t = TG(); if (t && !tgInit) { tgInit = true; try { t.ready(); t.expand(); } catch (e) {} } return t; }
   function say(text, cls) { msg.textContent = text; msg.className = cls || ''; }
+  function stopStream() { if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; } }
+  function arabicDigits(s) { return String(s || '').replace(/[٠-٩]/g, function (d) { return '٠١٢٣٤٥٦٧٨٩'.indexOf(d); }); }
 
-  function finish(code) {
+  // ---- الإرسال للبوت: رقم باركود ← "123…"، ونص بحث ← "q:اسم"
+  function deliver(payload, label) {
     if (done) return;
-    code = String(code || '').replace(/\D/g, '');
-    if (code.length < 6) { say('الرقم غير صالح', 'err'); return; }
     done = true;
     if (navigator.vibrate) navigator.vibrate(60);
-    say('✔ ' + code, 'ok');
-    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
-    var qs = new URLSearchParams(location.search), bname = (qs.get('b') || '').replace(/[^A-Za-z0-9_]/g, '');
-    if (qs.get('m') === 'inline' && bname && tg && tg.openTelegramLink) {   // فُتحت من زر مضمَّن: sendData غير متاحة، فيعود الرقم برابط البوت
-      tg.openTelegramLink('https://t.me/' + bname + '?start=scan_' + code);
-      setTimeout(function () { try { tg.close(); } catch (e) {} }, 400);
-    }
-    else if (tg && tg.sendData) { tg.sendData(code); }         // يغلق الواجهة ويرسل الرقم للبوت
-    else { say('✔ ' + code + ' (افتح الصفحة من البوت لإرسالها)', 'ok'); }
+    say('✔ ' + label, 'ok');
+    stopStream();
+    var tg = initTg(), qs = new URLSearchParams(location.search), bname = (qs.get('b') || '').replace(/[^A-Za-z0-9_]/g, '');
+    if (qs.get('m') === 'inline' && bname && tg && tg.openTelegramLink) {   // فُتحت من زر مضمَّن: sendData غير متاحة
+      if (/^\d+$/.test(payload)) { tg.openTelegramLink('https://t.me/' + bname + '?start=scan_' + payload); setTimeout(function () { try { tg.close(); } catch (e) {} }, 400); }
+      else { say('اكتب اسم الصنف مباشرة في المحادثة', 'err'); done = false; }
+    } else if (tg && tg.sendData) { tg.sendData(payload); }
+    else { say('✔ ' + label + ' (افتح الصفحة من البوت لإرسالها)', 'ok'); }
+  }
+  function finishCode(code) {
+    code = String(code || '').replace(/\D/g, '');
+    if (code.length < 6) { say('الرقم غير صالح', 'err'); return; }
+    deliver(code, code);
+  }
+  function submitManual() {
+    var v = arabicDigits(document.getElementById('manual').value).trim();
+    if (!v) return;
+    var d = v.replace(/\s+/g, '');
+    if (/^\d{6,}$/.test(d)) finishCode(d);
+    else if (v.length >= 2) deliver('q:' + v.slice(0, 80), v);
+    else say('اكتب حرفين على الأقل', 'err');
+  }
+  document.getElementById('send').onclick = submitManual;
+  document.getElementById('manual').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitManual(); });
+
+  // ---- القارئات: الأصلي في الجوال (BarcodeDetector) إن وُجد، وإلا zxing-wasm (يُحمَّل بالتوازي مع الكاميرا)
+  function initNative() {
+    if (!('BarcodeDetector' in window)) return Promise.resolve();
+    return BarcodeDetector.getSupportedFormats().then(function (sup) {
+      var f = NATIVE_FORMATS.filter(function (x) { return sup.indexOf(x) >= 0; });
+      if (f.length) nativeDet = new BarcodeDetector({ formats: f });
+    }).catch(function () {});
+  }
+  function initZx() {
+    if (zxPromise) return zxPromise;
+    zxPromise = (function () {
+      if (typeof ZXingWASM === 'undefined') return Promise.resolve();
+      return ZXingWASM.prepareZXingModule({
+        overrides: { locateFile: function (p, prefix) { return p.endsWith('.wasm') ? new URL('zxing_reader.wasm', location.href).href : prefix + p; } },
+        fireImmediately: true
+      }).then(function () { zxReady = true; }).catch(function () {});
+    })();
+    return zxPromise;
+  }
+  function zxRead(imageData, hard) {
+    return ZXingWASM.readBarcodes(imageData, { tryHarder: !!hard, tryRotate: true, formats: ZX_FORMATS, maxNumberOfSymbols: 1 });
   }
 
-  document.getElementById('send').onclick = function () { finish(document.getElementById('manual').value); };
-  document.getElementById('manual').addEventListener('keydown', function (e) { if (e.key === 'Enter') finish(this.value); });
+  // ---- صورة (كاميرا الجوال الأصلية أو المعرض): تعمل حتى لو تعذّرت الكاميرا الحيّة
+  async function readImage(file) {
+    say('جارٍ قراءة الصورة…');
+    await Promise.all([initNative(), initZx()]);
+    var bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+    catch (e) {
+      bmp = await new Promise(function (res, rej) { var im = new Image(); im.onload = function () { res(im); }; im.onerror = rej; im.src = URL.createObjectURL(file); });
+    }
+    var bw = bmp.width || bmp.naturalWidth, bh = bmp.height || bmp.naturalHeight;
+    var c = document.createElement('canvas'), x = c.getContext('2d', { willReadFrequently: true });
+    var sizes = [1600, 1000, 2400];
+    for (var i = 0; i < sizes.length; i++) {
+      var sc = Math.min(1, sizes[i] / Math.max(bw, bh));
+      c.width = Math.round(bw * sc); c.height = Math.round(bh * sc);
+      x.drawImage(bmp, 0, 0, c.width, c.height);
+      var code = null;
+      if (nativeDet) { try { var r = await nativeDet.detect(c); if (r && r.length) code = r[0].rawValue; } catch (e) {} }
+      if (!code && zxReady) { try { var rr = await zxRead(x.getImageData(0, 0, c.width, c.height), true); if (rr.length) code = rr[0].text; } catch (e) {} }
+      if (code) { finishCode(code); return; }
+    }
+    say('لم أستطع قراءة الباركود من الصورة. صوّره من قرب وبإضاءة جيدة، أو اكتب الرقم/الاسم.', 'err');
+  }
+  var photo = document.getElementById('photo');
+  document.getElementById('photoBtn').onclick = function () { photo.value = ''; photo.click(); };
+  photo.onchange = function () { if (photo.files && photo.files[0]) readImage(photo.files[0]).catch(function () { say('تعذّرت قراءة الصورة. اكتب الرقم/الاسم.', 'err'); }); };
 
-  async function start() {
-    if (typeof ZXingWASM === 'undefined') { say('تعذّر تحميل مكتبة القراءة', 'err'); return; }
-    await ZXingWASM.prepareZXingModule({
-      overrides: { locateFile: function (p, prefix) { return p.endsWith('.wasm') ? new URL('zxing_reader.wasm', location.href).href : prefix + p; } },
-      fireImmediately: true
-    });
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
-    });
+  // ---- الكاميرا الحيّة
+  async function openCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw { name: 'NoMedia' };
+    var tries = [
+      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      { video: { facingMode: 'environment' }, audio: false },
+      { video: true, audio: false }
+    ], err = null;
+    for (var i = 0; i < tries.length && !stream; i++) {
+      try { stream = await navigator.mediaDevices.getUserMedia(tries[i]); }
+      catch (e) { err = e; if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) break; }
+    }
+    if (!stream) throw err || { name: 'NoCamera' };
     video.srcObject = stream;
     await video.play();
+    // جوالات بعدة عدسات خلفية قد تفتح العدسة الواسعة (تركيزها ثابت فلا تقرأ الباركود القريب): نفضّل الرئيسية
+    try {
+      var cur = stream.getVideoTracks()[0], lab = (cur.label || '').toLowerCase();
+      if (/ultra|wide|macro|depth|tele/.test(lab)) {
+        var devs = (await navigator.mediaDevices.enumerateDevices()).filter(function (d) { return d.kind === 'videoinput'; });
+        var alt = devs.filter(function (d) { return /back|rear|environment|خلف/i.test(d.label) && !/ultra|wide|macro|depth|tele/i.test(d.label); })[0];
+        if (alt && alt.deviceId !== (cur.getSettings && cur.getSettings().deviceId)) {
+          var s2 = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: alt.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+          stopStream(); stream = s2; video.srcObject = s2; await video.play();
+        }
+      }
+    } catch (e) {}
     var track = stream.getVideoTracks()[0], caps = (track.getCapabilities && track.getCapabilities()) || {};
     if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+    video.onclick = function () {   // لمسة على الشاشة = إعادة التركيز
+      if (caps.focusMode && caps.focusMode.indexOf('single-shot') >= 0) track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }).then(function () {
+        if (caps.focusMode.indexOf('continuous') >= 0) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+      }).catch(function () {});
+    };
     if (caps.torch) {
       var b = document.getElementById('torch'), on = false; b.hidden = false;
       b.onclick = function () { on = !on; track.applyConstraints({ advanced: [{ torch: on }] }).catch(function () {}); b.textContent = on ? '🔦' : '💡'; };
     }
-    say('وجّه الباركود إلى الإطار');
+  }
+
+  function camError(e) {
+    var n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'SecurityError') say('الكاميرا غير مسموحة لتلغرام: من إعدادات الجوال ← التطبيقات ← تلغرام ← الأذونات ← الكاميرا. أو استعمل «📷 تصوير الباركود» أو اكتب الاسم/الرقم.', 'err');
+    else say('تعذّر تشغيل الكاميرا الحيّة على هذا الجوال. استعمل «📷 تصوير الباركود بكاميرا الجوال» أو اكتب الاسم/الرقم.', 'err');
+  }
+
+  // ---- حلقة القراءة
+  function loop() {
     var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
-    var work = document.createElement('canvas'), wctx = work.getContext('2d', { willReadFrequently: true });
-    var OPTS = { tryHarder: true, tryRotate: true, formats: ['EAN-13', 'EAN-8', 'UPC-A', 'UPC-E', 'Code128', 'Code39', 'ITF'], maxNumberOfSymbols: 1 };
-    var frames = 0, t0 = Date.now(), vw = 0, vh = 0, hinted = false;
-    var info = document.getElementById('info');
-
-    // كل إطار يُقرأ بصيغة مختلفة بالتناوب: كامل، ثم المنتصف مكبّرًا (للباركود الصغير/البعيد)، ثم مصغّرًا (للضبابي): يرفع نسبة القراءة
-    function variant(n) {
-      var w = canvas.width, h = canvas.height;
-      if (n === 0) return ctx.getImageData(0, 0, w, h);
-      if (n === 1) { var cw = Math.round(w * 0.6), ch = Math.round(h * 0.6); work.width = Math.round(cw * 1.6); work.height = Math.round(ch * 1.6);
-        wctx.drawImage(canvas, (w - cw) / 2, (h - ch) / 2, cw, ch, 0, 0, work.width, work.height); return wctx.getImageData(0, 0, work.width, work.height); }
-      work.width = Math.round(w * 0.55); work.height = Math.round(h * 0.55);
-      wctx.drawImage(canvas, 0, 0, work.width, work.height); return wctx.getImageData(0, 0, work.width, work.height);
-    }
-
-    (async function loop() {
+    var frames = 0, t0 = Date.now(), hinted = false;
+    (async function run() {
       while (!done) {
         if (video.readyState >= 2 && video.videoWidth) {
-          vw = video.videoWidth; vh = video.videoHeight;
-          canvas.width = vw; canvas.height = vh;
-          ctx.drawImage(video, 0, 0);
+          var vw = video.videoWidth, vh = video.videoHeight, text = null, fmt = '';
           try {
-            var res = await ZXingWASM.readBarcodes(variant(frames % 3), OPTS);
-            frames++;
-            if (res.length) {
-              var r = res[0], now = Date.now();
-              if (CHECKSUMMED[r.format] || (r.text === last && now - lastAt < 1500)) { finish(r.text); return; }
-              last = r.text; lastAt = now;
+            if (nativeDet) {   // القارئ الأصلي: سريع وبلا نسخ للإطار
+              var r = await nativeDet.detect(video);
+              if (r && r.length) { text = r[0].rawValue; fmt = r[0].format; }
             }
-          } catch (e) { frames++; }
-          if (info) info.textContent = '📡 ' + frames + ' إطار · ' + vw + '×' + vh;
-          if (!hinted && Date.now() - t0 > 6000) { hinted = true; say('قرّب الباركود (10–20 سم)، ثبّته أفقيًا، وتجنّب اللمعان'); }
+            if (!text && zxReady && (!nativeDet || frames % 3 === 2)) {   // zxing: المنطقة الوسطى فقط (أسرع بكثير من الإطار كاملًا)، ومرة بتدقيق أعلى
+              var sx = Math.round(vw * 0.04), sy = Math.round(vh * 0.2), sw = Math.round(vw * 0.92), sh = Math.round(vh * 0.6);
+              var k = Math.min(1, 900 / sw);
+              canvas.width = Math.round(sw * k); canvas.height = Math.round(sh * k);
+              ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+              var rr = await zxRead(ctx.getImageData(0, 0, canvas.width, canvas.height), frames % 4 === 3);
+              if (rr.length) { text = rr[0].text; fmt = rr[0].format; }
+            }
+          } catch (e) {}
+          frames++;
+          if (text) {
+            var now = Date.now();
+            if (CHECKSUMMED[fmt] || (text === last && now - lastAt < 1500)) { finishCode(text); return; }
+            last = text; lastAt = now;
+          }
+          info.textContent = (nativeDet ? '⚡ ' : '📡 ') + frames + ' · ' + vw + '×' + vh;
+          if (!hinted && Date.now() - t0 > 6000) { hinted = true; say('قرّب الباركود (10–20 سم) وثبّته أفقيًا، المس الشاشة للتركيز، أو استعمل «📷 تصوير الباركود»'); }
         }
-        await new Promise(function (r) { setTimeout(r, 60); });
+        await new Promise(function (res) { setTimeout(res, nativeDet ? 70 : 40); });
       }
     })();
   }
 
-  start().catch(function () {
-    say('تعذّر فتح الكاميرا: اسمح بالوصول للكاميرا، أو اكتب الرقم يدويًا.', 'err');
-  });
-})();
+  initTg();
+  // الكاميرا والقارئ يبدآن معًا (لا ننتظر تحميل المكتبة قبل فتح الكاميرا)
+  initNative();
+  initZx();
+  openCamera().then(function () {
+    say('وجّه الباركود إلى الإطار');
+    loop();
+  }).catch(camError);
+});
 </script>
 </body>
 </html>
